@@ -11,6 +11,7 @@ type clusterAgent struct {
 
 	httpMux     *httpMux
 	tracer      *tracerComponent
+	telemetry   *telemetryComponent
 	http        *httpComponent
 	diagnostics *diagnosticsComponent
 	n1ql        *n1qlQueryComponent
@@ -30,7 +31,22 @@ func createClusterAgent(config *clusterAgentConfig) (*clusterAgent, error) {
 		defaultRetryStrategy: config.DefaultRetryStrategy,
 	}
 
+	userAgent := config.UserAgent
+
 	c.tracer = newTracerComponent(config.TracerConfig.Tracer, "", config.TracerConfig.NoRootTraceSpans, config.MeterConfig.Meter, c)
+
+	c.telemetry = newTelemetryComponent(telemetryComponentProps{
+		userAgent: userAgent,
+		backoff:   config.TelemetryConfig.Backoff,
+	})
+	if config.TelemetryConfig.Endpoint == "" {
+		c.telemetry.setupWebsocketReporter(c)
+	} else {
+		err := c.telemetry.setupWebsocketReporterWithFixedEndpoint(config.TelemetryConfig.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	tlsConfig, err := setupTLSConfig(config.SeedConfig.MemdAddrs, config.SecurityConfig)
 	if err != nil {
@@ -51,7 +67,6 @@ func createClusterAgent(config *clusterAgentConfig) (*clusterAgent, error) {
 	}
 
 	circuitBreakerConfig := config.CircuitBreakerConfig
-	userAgent := config.UserAgent
 
 	httpEpList := routeEndpoints{}
 	for _, hostPort := range config.SeedConfig.HTTPAddrs {
