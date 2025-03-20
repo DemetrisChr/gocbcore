@@ -260,7 +260,7 @@ type TransactionMutableItemMeta struct {
 	ForwardCompat map[string][]TransactionForwardCompatibilityEntry `json:"fc,omitempty"`
 }
 
-// TransactionGetResult represents the result of a Get or GetOptional operation.
+// TransactionGetResult represents the result of a Get operation.
 type TransactionGetResult struct {
 	agent          *Agent
 	oboUser        string
@@ -273,7 +273,7 @@ type TransactionGetResult struct {
 	Cas   Cas
 }
 
-// TransactionGetCallback describes a callback for a completed Get or GetOptional operation.
+// TransactionGetCallback describes a callback for a completed Get operation.
 type TransactionGetCallback func(*TransactionGetResult, error)
 
 // Get will attempt to fetch a document, and fail the transaction if it does not exist.
@@ -283,6 +283,52 @@ func (t *Transaction) Get(opts TransactionGetOptions, cb TransactionGetCallback)
 	}
 
 	return t.attempt.Get(opts, cb)
+}
+
+type TransactionGetMultiSpec struct {
+	Agent          *Agent
+	ScopeName      string
+	CollectionName string
+	Key            []byte
+
+	originalIdx int
+}
+
+type TransactionGetMultiMode uint8
+
+const (
+	TransactionGetMultiModeUnset TransactionGetMultiMode = iota
+	TransactionGetMultiModePrioritiseLatency
+	TransactionGetMultiModeDisableReadSkewDetection
+	TransactionGetMultiModePrioritiseReadSkewDetection
+)
+
+type TransactionGetMultiOptions struct {
+	OboUser string
+
+	// Specs specifies which documents to fetch
+	Specs []TransactionGetMultiSpec
+
+	// ServerGroup specifies to attempt to fetch the key from all nodes within
+	// the specified group, returning the first successful result.
+	ServerGroup string
+
+	// Mode
+	Mode TransactionGetMultiMode
+}
+
+type TransactionGetMultiResult struct {
+	Values map[int][]byte
+}
+
+type TransactionGetMultiCallback func(*TransactionGetMultiResult, error)
+
+func (t *Transaction) GetMulti(opts TransactionGetMultiOptions, cb TransactionGetMultiCallback) error {
+	if t.attempt == nil {
+		return ErrNoAttempt
+	}
+
+	return t.attempt.GetMulti(opts, cb)
 }
 
 // TransactionInsertOptions provides options for a Insert operation.

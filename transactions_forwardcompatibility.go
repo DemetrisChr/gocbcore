@@ -50,6 +50,7 @@ func TransactionsProtocolExtensions() []string {
 		"EXT_QUERY_CONTEXT",
 		"EXT_REPLICA_FROM_PREFERRED_GROUP",
 		"EXT_PARALLEL_UNSTAGING",
+		"EXT_GET_MULTI",
 	}
 }
 
@@ -87,6 +88,7 @@ const (
 	forwardCompatExtensionQueryContext              forwardCompatExtension = "QC"
 	forwardCompatExtensionReplicaFromPreferredGroup forwardCompatExtension = "RP"
 	forwardCompatExtensionParallelUnstaging         forwardCompatExtension = "PU"
+	forwardCompatExtensionGetMulti                  forwardCompatExtension = "GM"
 )
 
 type forwardCompatStage string
@@ -101,6 +103,7 @@ const (
 	forwardCompatStageGets             forwardCompatStage = "G"
 	forwardCompatStageGetsReadingATR   forwardCompatStage = "G_A"
 	forwardCompatStageGetsCleanupEntry forwardCompatStage = "CL_E"
+	forwardCompatStageGetMultiGets     forwardCompatStage = "GM_G"
 )
 
 const (
@@ -138,6 +141,7 @@ var supportedforwardCompatExtensions = []forwardCompatExtension{
 	forwardCompatExtensionQueryContext,
 	forwardCompatExtensionReplicaFromPreferredGroup,
 	forwardCompatExtensionParallelUnstaging,
+	forwardCompatExtensionGetMulti,
 }
 
 func jsonForwardCompatToForwardCompat(fc map[string][]jsonForwardCompatibilityEntry) map[string][]TransactionForwardCompatibilityEntry {
