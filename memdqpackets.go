@@ -1,7 +1,6 @@
 package gocbcore
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -95,7 +94,9 @@ type memdQRequest struct {
 	resourceUnitsLock sync.Mutex
 	resourceUnits     *ResourceUnitResult
 
-	telemetryRecorder *telemetryOpRecorder
+	// This stores a memdQRequestTelemetryInfo value which is used for storing the attributes needed when reporting
+	// app telemetry metrics for this request.
+	telemetryInfo atomic.Value
 
 	totalServerDuration time.Duration
 }
@@ -104,6 +105,13 @@ type memdQRequestConnInfo struct {
 	lastDispatchedTo   string
 	lastDispatchedFrom string
 	lastConnectionID   string
+}
+
+type memdQRequestTelemetryInfo struct {
+	node            string
+	altNode         string
+	nodeUUID        string
+	lastAttemptTime time.Time
 }
 
 func (req *memdQRequest) AddResourceUnits(readUnitsFrame *memd.ReadUnitsFrame, writeUnitsFrame *memd.WriteUnitsFrame) {
@@ -197,6 +205,18 @@ func (req *memdQRequest) SetConnectionInfo(info memdQRequestConnInfo) {
 	req.connInfo.Store(info)
 }
 
+func (req *memdQRequest) TelemetryInfo() memdQRequestTelemetryInfo {
+	p := req.telemetryInfo.Load()
+	if p == nil {
+		return memdQRequestTelemetryInfo{}
+	}
+	return p.(memdQRequestTelemetryInfo)
+}
+
+func (req *memdQRequest) SetTelemetryInfo(info memdQRequestTelemetryInfo) {
+	req.telemetryInfo.Store(info)
+}
+
 func (req *memdQRequest) SetTimer(t *time.Timer) {
 	req.timer.Store(t)
 }
@@ -282,21 +302,6 @@ func (req *memdQRequest) internalCancel(err error) bool {
 		waitingIn.CancelRequest(req, err)
 		localAddr = waitingIn.LocalAddress()
 		remoteAddr = waitingIn.Address()
-	}
-
-	if req.telemetryRecorder != nil {
-		outcome := telemetryOutcomeSuccess
-		if err != nil {
-			if errors.Is(err, ErrRequestCanceled) {
-				outcome = telemetryOutcomeCanceled
-			} else if errors.Is(err, ErrTimeout) {
-				outcome = telemetryOutcomeTimedout
-			} else {
-				outcome = telemetryOutcomeError
-			}
-		}
-
-		req.telemetryRecorder.FinishAndRecordLocked(outcome)
 	}
 
 	cancelReqTraceLocked(req, localAddr, remoteAddr)

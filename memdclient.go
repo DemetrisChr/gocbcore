@@ -2,6 +2,7 @@ package gocbcore
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -53,6 +54,7 @@ type memdClient struct {
 	serverRequestHandler  serverRequestHandler
 	tracer                *tracerComponent
 	zombieLogger          *zombieLoggerComponent
+	telemetry             *telemetryComponent
 
 	dcpQueueSize int
 
@@ -88,7 +90,7 @@ type memdClientProps struct {
 }
 
 func newMemdClient(props memdClientProps, conn memdConn, breakerCfg CircuitBreakerConfig, postErrHandler postCompleteErrorHandler,
-	tracer *tracerComponent, zombieLogger *zombieLoggerComponent, serverRequestHandler serverRequestHandler) *memdClient {
+	tracer *tracerComponent, zombieLogger *zombieLoggerComponent, telemetry *telemetryComponent, serverRequestHandler serverRequestHandler) *memdClient {
 	client := memdClient{
 		closeNotify:          make(chan bool),
 		connReleaseNotify:    make(chan struct{}),
@@ -98,6 +100,7 @@ func newMemdClient(props memdClientProps, conn memdConn, breakerCfg CircuitBreak
 		serverRequestHandler: serverRequestHandler,
 		tracer:               tracer,
 		zombieLogger:         zombieLogger,
+		telemetry:            telemetry,
 		conn:                 conn,
 		opList:               newMemdOpMap(),
 
@@ -201,12 +204,13 @@ func (client *memdClient) takeRequestOwnership(req *memdQRequest) error {
 		return errRequestCanceled
 	}
 
-	connInfo := memdQRequestConnInfo{
+	req.SetConnectionInfo(memdQRequestConnInfo{
 		lastDispatchedTo:   client.Address(),
 		lastDispatchedFrom: client.conn.LocalAddr(),
 		lastConnectionID:   client.connID,
-	}
-	req.SetConnectionInfo(connInfo)
+	})
+
+	req.SetTelemetryInfo(memdQRequestTelemetryInfoFromConn(client.conn))
 
 	client.opList.Add(req)
 	return nil
@@ -234,6 +238,34 @@ func (client *memdClient) CancelRequest(req *memdQRequest, err error) bool {
 
 		if tombstoneEvicted && client.zombieLogger != nil {
 			client.zombieLogger.RecordTombstoneEviction()
+		}
+	}
+
+	if client.telemetry.TelemetryEnabled() {
+		category := req.Command.Category()
+
+		if category != memd.CmdCategoryUnknown {
+			outcome := telemetryOutcomeSuccess
+			if err != nil {
+				if errors.Is(err, ErrRequestCanceled) {
+					outcome = telemetryOutcomeCanceled
+				} else if errors.Is(err, ErrTimeout) {
+					outcome = telemetryOutcomeTimedout
+				} else {
+					outcome = telemetryOutcomeError
+				}
+			}
+			info := req.TelemetryInfo()
+			client.telemetry.RecordOp(telemetryOperationAttributes{
+				duration: time.Since(req.dispatchTime),
+				outcome:  outcome,
+				nodeUUID: info.nodeUUID,
+				node:     info.node,
+				altNode:  info.altNode,
+				service:  MemdService,
+				durable:  req.DurabilityLevelFrame != nil && req.DurabilityLevelFrame.DurabilityLevel != memd.DurabilityLevel(0),
+				mutation: category == memd.CmdCategoryMutation,
+			})
 		}
 	}
 
@@ -280,11 +312,6 @@ func (client *memdClient) internalSendRequest(req *memdQRequest) error {
 
 	logSchedf("Writing request. %s to %s OP=0x%x. Opaque=%d. Vbid=%d", client.conn.LocalAddr(), client.loggerID(), req.Command, req.Opaque, req.Vbucket)
 
-	if req.telemetryRecorder != nil {
-		req.processingLock.Lock()
-		req.telemetryRecorder.StartLocked()
-		req.processingLock.Unlock()
-	}
 	client.tracer.StartNetTrace(req)
 
 	err := client.conn.WritePacket(packet)
@@ -381,8 +408,21 @@ func (client *memdClient) resolveRequest(resp *memdQResponse) {
 			req.recordServerDurationLocked(resp.ServerDurationFrame.ServerDuration)
 		}
 
-		if req.telemetryRecorder != nil {
-			req.telemetryRecorder.FinishAndRecordLocked(telemetryOutcomeSuccess)
+		if client.telemetry.TelemetryEnabled() {
+			category := req.Command.Category()
+			if category != memd.CmdCategoryUnknown {
+				info := req.TelemetryInfo()
+				client.telemetry.RecordOp(telemetryOperationAttributes{
+					duration: time.Since(info.lastAttemptTime),
+					outcome:  telemetryOutcomeSuccess,
+					nodeUUID: info.nodeUUID,
+					node:     info.node,
+					altNode:  info.altNode,
+					service:  MemdService,
+					durable:  req.DurabilityLevelFrame != nil && req.DurabilityLevelFrame.DurabilityLevel != memd.DurabilityLevel(0),
+					mutation: category == memd.CmdCategoryMutation,
+				})
+			}
 		}
 	}
 

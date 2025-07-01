@@ -305,6 +305,7 @@ func createAgent(config *AgentConfig) (*Agent, error) {
 		circuitBreakerConfig,
 		c.zombieLogger,
 		c.tracer,
+		c.telemetry,
 		c.cfgManager,
 	)
 	c.kvMux = newKVMux(
@@ -317,7 +318,6 @@ func createAgent(config *AgentConfig) (*Agent, error) {
 		c.cfgManager,
 		c.errMap,
 		c.tracer,
-		c.telemetry,
 		c.dialer,
 		&kvMuxState{
 			tlsConfig:          tlsConfig,

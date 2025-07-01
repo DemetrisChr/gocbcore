@@ -17,6 +17,7 @@ const defaultReaderBufSize = 20 * 1024 * 1024
 type memdConn interface {
 	LocalAddr() string
 	RemoteAddr() string
+	RemoteCanonicalAddr() string
 	NodeUUID() string
 	WritePacket(*memd.Packet) error
 	ReadPacket() (*memd.Packet, int, error)
@@ -81,12 +82,13 @@ func releaseReadBuf(buf *bufio.Reader, bufSize int) {
 }
 
 type memdConnWrap struct {
-	localAddr  string
-	remoteAddr string
-	nodeUUID   string
-	conn       *memd.Conn
-	baseConn   *wrappedReadWriteCloser
-	bufSize    int
+	localAddr           string
+	remoteAddr          string
+	remoteCanonicalAddr string
+	nodeUUID            string
+	conn                *memd.Conn
+	baseConn            *wrappedReadWriteCloser
+	bufSize             int
 }
 
 func (s *memdConnWrap) LocalAddr() string {
@@ -95,6 +97,10 @@ func (s *memdConnWrap) LocalAddr() string {
 
 func (s *memdConnWrap) RemoteAddr() string {
 	return s.remoteAddr
+}
+
+func (s *memdConnWrap) RemoteCanonicalAddr() string {
+	return s.remoteCanonicalAddr
 }
 
 func (s *memdConnWrap) NodeUUID() string {
@@ -179,11 +185,42 @@ func dialMemdConn(ctx context.Context, ep routeEndpoint, tlsConfig *tls.Config, 
 	}
 
 	return &memdConnWrap{
-		conn:       memd.NewConn(c),
-		baseConn:   c,
-		localAddr:  baseConn.LocalAddr().String(),
-		remoteAddr: ep.Address,
-		nodeUUID:   ep.NodeUUID,
-		bufSize:    int(bufSize),
+		conn:                memd.NewConn(c),
+		baseConn:            c,
+		localAddr:           baseConn.LocalAddr().String(),
+		remoteAddr:          ep.Address,
+		remoteCanonicalAddr: ep.CanonicalAddress,
+		nodeUUID:            ep.NodeUUID,
+		bufSize:             int(bufSize),
 	}, nil
+}
+
+func memdQRequestTelemetryInfoFromConn(conn memdConn) memdQRequestTelemetryInfo {
+	var node, altNode string
+	if conn.RemoteCanonicalAddr() != "" && conn.RemoteCanonicalAddr() != conn.RemoteAddr() {
+		var err error
+		node, err = hostFromHostPort(conn.RemoteCanonicalAddr())
+		if err != nil {
+			node = conn.RemoteCanonicalAddr()
+		}
+		altNode, err = hostFromHostPort(conn.RemoteAddr())
+		if err != nil {
+			altNode = conn.RemoteAddr()
+		}
+	} else {
+		var err error
+		node, err = hostFromHostPort(conn.RemoteAddr())
+		if err != nil {
+			node = conn.RemoteAddr()
+		}
+	}
+
+	logWarnf("Creating telemetry info for conn for canonical remote %s, remote %s, nodeUUID %s", conn.RemoteCanonicalAddr(), conn.RemoteAddr(), conn.NodeUUID())
+
+	return memdQRequestTelemetryInfo{
+		node:            node,
+		altNode:         altNode,
+		nodeUUID:        conn.NodeUUID(),
+		lastAttemptTime: time.Now(),
+	}
 }

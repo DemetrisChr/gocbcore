@@ -44,9 +44,8 @@ type kvMux struct {
 	cfgMgr             *configManagementComponent
 	errMapMgr          *errMapComponent
 
-	tracer    *tracerComponent
-	telemetry *telemetryComponent
-	dialer    *memdClientDialerComponent
+	tracer *tracerComponent
+	dialer *memdClientDialerComponent
 
 	postCompleteErrHandler postCompleteErrorHandler
 
@@ -75,7 +74,7 @@ type kvMuxProps struct {
 }
 
 func newKVMux(props kvMuxProps, cfgMgr *configManagementComponent, errMapMgr *errMapComponent, tracer *tracerComponent,
-	telemetry *telemetryComponent, dialer *memdClientDialerComponent, muxState *kvMuxState) *kvMux {
+	dialer *memdClientDialerComponent, muxState *kvMuxState) *kvMux {
 	mux := &kvMux{
 		queueSize:          props.QueueSize,
 		poolSize:           props.PoolSize,
@@ -83,7 +82,6 @@ func newKVMux(props kvMuxProps, cfgMgr *configManagementComponent, errMapMgr *er
 		cfgMgr:             cfgMgr,
 		errMapMgr:          errMapMgr,
 		tracer:             tracer,
-		telemetry:          telemetry,
 		dialer:             dialer,
 		shutdownSig:        make(chan struct{}),
 		noTLSSeedNode:      props.NoTLSSeedNode,
@@ -914,7 +912,7 @@ func (mux *kvMux) newKVMuxState(cfg *routeConfig, tlsConfig *dynTLSConfig, authM
 			return mux.dialer.SlowDialMemdClient(cancelSig, trimmedEndpoint, tlsConfig, auth, authMechanisms,
 				mux.handleOpRoutingResp, mux.handleServerRequest)
 		}
-		pipeline := newPipeline(trimmedEndpoint, poolSize, mux.queueSize, getCurClientFn, mux.telemetry)
+		pipeline := newPipeline(trimmedEndpoint, poolSize, mux.queueSize, getCurClientFn)
 
 		pipelines[i] = pipeline
 	}

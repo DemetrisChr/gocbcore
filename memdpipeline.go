@@ -16,37 +16,31 @@ var (
 type memdGetClientFn func(cancelSig <-chan struct{}) (*memdClient, error)
 
 type memdPipeline struct {
-	address          string
-	getClientFn      memdGetClientFn
-	maxItems         int
-	queue            *memdOpQueue
-	maxClients       int
-	clients          []*memdPipelineClient
-	clientsLock      sync.Mutex
-	isSeedNode       bool
-	serverGroup      string
-	nodeUUID         string
-	canonicalAddress string
-	telemetry        *telemetryComponent
+	address     string
+	getClientFn memdGetClientFn
+	maxItems    int
+	queue       *memdOpQueue
+	maxClients  int
+	clients     []*memdPipelineClient
+	clientsLock sync.Mutex
+	isSeedNode  bool
+	serverGroup string
 }
 
-func newPipeline(endpoint routeEndpoint, maxClients, maxItems int, getClientFn memdGetClientFn, telemetry *telemetryComponent) *memdPipeline {
+func newPipeline(endpoint routeEndpoint, maxClients, maxItems int, getClientFn memdGetClientFn) *memdPipeline {
 	return &memdPipeline{
-		address:          endpoint.Address,
-		getClientFn:      getClientFn,
-		maxClients:       maxClients,
-		maxItems:         maxItems,
-		queue:            newMemdOpQueue(),
-		isSeedNode:       endpoint.IsSeedNode,
-		serverGroup:      endpoint.ServerGroup,
-		nodeUUID:         endpoint.NodeUUID,
-		canonicalAddress: endpoint.CanonicalAddress,
-		telemetry:        telemetry,
+		address:     endpoint.Address,
+		getClientFn: getClientFn,
+		maxClients:  maxClients,
+		maxItems:    maxItems,
+		queue:       newMemdOpQueue(),
+		isSeedNode:  endpoint.IsSeedNode,
+		serverGroup: endpoint.ServerGroup,
 	}
 }
 
 func newDeadPipeline(maxItems int) *memdPipeline {
-	return newPipeline(routeEndpoint{}, 0, maxItems, nil, nil)
+	return newPipeline(routeEndpoint{}, 0, maxItems, nil)
 }
 
 // nolint: unused
@@ -115,42 +109,6 @@ func (pipeline *memdPipeline) StartClients() {
 }
 
 func (pipeline *memdPipeline) sendRequest(req *memdQRequest, maxItems int) error {
-	if pipeline.telemetry.TelemetryEnabled() {
-		cmdCategory := req.Command.Category()
-
-		if cmdCategory != memd.CmdCategoryUnknown {
-			var node, altNode string
-			if pipeline.canonicalAddress != "" && pipeline.canonicalAddress != pipeline.address {
-				var err error
-				node, err = hostFromHostPort(pipeline.canonicalAddress)
-				if err != nil {
-					node = pipeline.canonicalAddress
-				}
-				altNode, err = hostFromHostPort(pipeline.address)
-				if err != nil {
-					altNode = pipeline.address
-				}
-			} else {
-				var err error
-				node, err = hostFromHostPort(pipeline.address)
-				if err != nil {
-					node = pipeline.address
-				}
-			}
-
-			req.processingLock.Lock()
-			req.telemetryRecorder = pipeline.telemetry.GetRecorder(telemetryOperationAttributes{
-				node:     node,
-				altNode:  altNode,
-				nodeUUID: pipeline.nodeUUID,
-				service:  MemdService,
-				mutation: cmdCategory == memd.CmdCategoryMutation,
-				durable:  req.DurabilityLevelFrame != nil && req.DurabilityLevelFrame.DurabilityLevel != 0,
-			})
-			req.processingLock.Unlock()
-		}
-	}
-
 	err := pipeline.queue.Push(req, maxItems)
 	if err == errOpQueueClosed {
 		return errPipelineClosed
