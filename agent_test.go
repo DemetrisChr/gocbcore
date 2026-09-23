@@ -134,8 +134,8 @@ func (suite *StandardTestSuite) TestPreserveExpirySet() {
 
 	suite.verifyExpiryUsingHLC("testsetpreserveExpiry", agent, s, expiry)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(3, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testsetpreserveExpiry")
 			suite.AssertOpSpan(nilParents[1], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testsetpreserveExpiry")
@@ -192,8 +192,8 @@ func (suite *StandardTestSuite) TestPreserveExpiryReplace() {
 
 	suite.verifyExpiryUsingHLC("testreplacepreserveExpiry", agent, s, expiry)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(3, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testreplacepreserveExpiry")
 			suite.AssertOpSpan(nilParents[1], "Replace", agent.BucketName(), memd.CmdReplace.Name(), 1, false, "testreplacepreserveExpiry")
@@ -251,8 +251,8 @@ func (suite *StandardTestSuite) TestPreserveExpiryAppend() {
 
 	suite.verifyExpiryUsingHLC("testappendpreserveExpiry", agent, s, expiry)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(3, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testappendpreserveExpiry")
 			suite.AssertOpSpan(nilParents[1], "Append", agent.BucketName(), memd.CmdAppend.Name(), 1, false, "testappendpreserveExpiry")
@@ -312,8 +312,8 @@ func (suite *StandardTestSuite) TestPreserveExpiryIncrement() {
 
 	suite.verifyExpiryUsingHLC("testincrementpreserveExpiry", agent, s, expiry)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(3, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Increment", agent.BucketName(), memd.CmdIncrement.Name(), 1, false, "testincrementpreserveExpiry")
 			suite.AssertOpSpan(nilParents[2], "LookupIn", agent.BucketName(), memd.CmdSubDocMultiLookup.Name(), 1, false, "testincrementpreserveExpiry")
@@ -362,8 +362,8 @@ func (suite *StandardTestSuite) TestBasicOps() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(2, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "test")
 			suite.AssertOpSpan(nilParents[1], "Get", agent.BucketName(), memd.CmdGet.Name(), 1, false, "test")
@@ -437,8 +437,8 @@ func (suite *StandardTestSuite) TestCasMismatch() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(3, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testCasMismatch")
 			suite.AssertOpSpan(nilParents[1], "Replace", agent.BucketName(), memd.CmdReplace.Name(), 1, false, "testCasMismatch")
@@ -504,8 +504,8 @@ func (suite *StandardTestSuite) TestGetReplica() {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().GreaterOrEqual(len(nilParents), 2) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testReplica")
 			suite.AssertOpSpan(nilParents[1], "GetOneReplica", agent.BucketName(), memd.CmdGetReplica.Name(), 1, true, "testReplica")
@@ -514,6 +514,177 @@ func (suite *StandardTestSuite) TestGetReplica() {
 
 	suite.VerifyKVMetrics(suite.meter, "Set", 1, false, false)
 	suite.VerifyKVMetrics(suite.meter, "GetOneReplica", 1, true, false)
+}
+
+type testReplicaSelector struct {
+	replicaIdx    int
+	failWithError error
+
+	// Used for validation
+	suite *StandardTestSuite
+	agent *Agent
+	key   []byte
+}
+
+func (s testReplicaSelector) selectReplica(numReplicas int, serverIdxChain []int) (int, error) {
+	s.validateReplicaInfo(numReplicas, serverIdxChain)
+
+	if s.failWithError != nil {
+		return 0, s.failWithError
+	}
+	return s.replicaIdx, nil
+}
+
+func (s testReplicaSelector) validateReplicaInfo(numReplicas int, serverIdxChain []int) {
+	// This does not affect the execution of the test, since we don't use the
+	// provided info in testReplicaStrategy, but validates that they are as expected
+	s.suite.Assert().Equal(s.agent.kvMux.NumReplicas(), numReplicas)
+	for copyIdx, serverIdx := range serverIdxChain {
+		expectedServerIdx, err := s.agent.kvMux.getState().VBMap().NodeByKey(s.key, uint32(copyIdx))
+		s.suite.Assert().NoError(err)
+		if err != nil {
+			s.suite.Assert().Equal(expectedServerIdx, serverIdx)
+		}
+	}
+}
+
+func (suite *StandardTestSuite) createTestReplicaSelector(replicaIdx int, failWithError error, key []byte) ReplicaSelector {
+	return testReplicaSelector{
+		replicaIdx:    replicaIdx,
+		failWithError: failWithError,
+		suite:         suite,
+		agent:         suite.DefaultAgent(),
+		key:           key,
+	}
+}
+
+func (suite *StandardTestSuite) TestGetReplicaWithReplicaSelector() {
+	suite.EnsureSupportsFeature(TestFeatureReplicas)
+
+	key := []byte("testReplica")
+
+	type testCase struct {
+		name            string
+		replicaSelector ReplicaSelector
+		expectedErr     error
+	}
+
+	errCouldNotSelectReplica := errors.New("could not select replica")
+
+	testCases := []testCase{
+		{
+			name:            "MockReplicaSelectorReturnsActive",
+			replicaSelector: suite.createTestReplicaSelector(0, nil, key),
+			expectedErr:     ErrInvalidReplica,
+		},
+		{
+			name:            "MockReplicaSelectorReturnsValidReplicaIdx",
+			replicaSelector: suite.createTestReplicaSelector(1, nil, key),
+			expectedErr:     nil,
+		},
+		{
+			name:            "MockReplicaSelectorReturnsInvalidReplicaIdx",
+			replicaSelector: suite.createTestReplicaSelector(20, nil, key),
+			expectedErr:     ErrInvalidReplica,
+		},
+		{
+			name:            "MockReplicaSelectorReturnsError",
+			replicaSelector: suite.createTestReplicaSelector(0, errCouldNotSelectReplica, key),
+			expectedErr:     errCouldNotSelectReplica,
+		},
+		{
+			name:            "SelectReplicaByIndexActive",
+			replicaSelector: IndexReplicaSelector{ReplicaIdx: 0},
+			expectedErr:     ErrInvalidReplica,
+		},
+		{
+			name:            "SelectReplicaByIndexWithinBoundsNoWrap",
+			replicaSelector: IndexReplicaSelector{ReplicaIdx: 1},
+			expectedErr:     nil,
+		},
+		{
+			name:            "SelectReplicaByIndexWithinBoundsWrap",
+			replicaSelector: IndexReplicaSelector{ReplicaIdx: 1, Wrap: true},
+			expectedErr:     nil,
+		},
+		{
+			name:            "SelectReplicaByIndexOutOfBoundsNoWrap",
+			replicaSelector: IndexReplicaSelector{ReplicaIdx: 5},
+			expectedErr:     ErrInvalidReplica,
+		},
+		{
+			name:            "SelectReplicaByIndexOutOfBoundsWrap",
+			replicaSelector: IndexReplicaSelector{ReplicaIdx: 5, Wrap: true},
+			expectedErr:     nil,
+		},
+	}
+
+	agent, s := suite.GetAgentAndHarness()
+
+	// Set
+	s.PushOp(agent.Set(SetOptions{
+		Key:            []byte("testReplica"),
+		Value:          []byte("{}"),
+		CollectionName: suite.CollectionName,
+		ScopeName:      suite.ScopeName,
+	}, func(res *StoreResult, err error) {
+		s.Wrap(func() {
+			if err != nil {
+				s.Fatalf("Set operation failed: %v", err)
+			}
+			if res.Cas == Cas(0) {
+				s.Fatalf("Invalid cas received")
+			}
+		})
+	}))
+	s.Wait(0)
+
+	for _, tc := range testCases {
+		suite.Run(tc.name, func() {
+			retries := 0
+			keyExists := false
+			for {
+				op, err := agent.GetOneReplica(GetOneReplicaOptions{
+					Key:             []byte("testReplica"),
+					CollectionName:  suite.CollectionName,
+					ScopeName:       suite.ScopeName,
+					ReplicaSelector: tc.replicaSelector,
+				}, func(res *GetReplicaResult, err error) {
+					s.Wrap(func() {
+						keyNotFound := errors.Is(err, ErrDocumentNotFound)
+						if err == nil {
+							keyExists = true
+						} else if err != nil && !keyNotFound {
+							s.Fatalf("GetReplica specific returned error that was not document not found: %v", err)
+						}
+						if !keyNotFound && res.Cas == Cas(0) {
+							s.Fatalf("Invalid cas received")
+						}
+					})
+				})
+				if tc.expectedErr != nil {
+					suite.Assert().ErrorIs(err, tc.expectedErr)
+				} else {
+					suite.Assert().NoError(err)
+				}
+
+				if err != nil {
+					break
+				}
+
+				s.PushOp(op, nil)
+				s.Wait(0)
+				if keyExists {
+					break
+				}
+				retries++
+				if retries >= 5 {
+					suite.Fail("GetReplica could not locate key")
+					break
+				}
+			}
+		})
+	}
 }
 
 func (suite *StandardTestSuite) TestDurableWriteGetReplica() {
@@ -573,8 +744,8 @@ func (suite *StandardTestSuite) TestDurableWriteGetReplica() {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().GreaterOrEqual(len(nilParents), 2) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testDurableReplica")
 			suite.AssertOpSpan(nilParents[1], "GetOneReplica", agent.BucketName(), memd.CmdGetReplica.Name(), 1, true, "testDurableReplica")
@@ -641,8 +812,8 @@ func (suite *StandardTestSuite) TestAddDurableWriteGetReplica() {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().GreaterOrEqual(len(nilParents), 2) {
 			suite.AssertOpSpan(nilParents[0], "Add", agent.BucketName(), memd.CmdAdd.Name(), 1, false, "testAddDurableReplica")
 			suite.AssertOpSpan(nilParents[1], "GetOneReplica", agent.BucketName(), memd.CmdGetReplica.Name(), 1, true, "testAddDurableReplica")
@@ -728,8 +899,8 @@ func (suite *StandardTestSuite) TestReplaceDurableWriteGetReplica() {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().GreaterOrEqual(len(nilParents), 3) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testReplaceDurableReplica")
 			suite.AssertOpSpan(nilParents[1], "Replace", agent.BucketName(), memd.CmdReplace.Name(), 1, false, "testReplaceDurableReplica")
@@ -815,8 +986,8 @@ func (suite *StandardTestSuite) TestDeleteDurableWriteGetReplica() {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().GreaterOrEqual(len(nilParents), 3) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testDeleteDurableReplica")
 			suite.AssertOpSpan(nilParents[1], "Delete", agent.BucketName(), memd.CmdDelete.Name(), 1, false, "testDeleteDurableReplica")
@@ -862,8 +1033,8 @@ func (suite *StandardTestSuite) TestBasicReplace() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(2, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testx")
 			suite.AssertOpSpan(nilParents[1], "Replace", agent.BucketName(), memd.CmdReplace.Name(), 1, false, "testx")
@@ -900,8 +1071,8 @@ func (suite *StandardTestSuite) TestBasicRemove() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(2, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testy")
 			suite.AssertOpSpan(nilParents[1], "Delete", agent.BucketName(), memd.CmdDelete.Name(), 1, false, "testy")
@@ -941,8 +1112,8 @@ func (suite *StandardTestSuite) TestBasicInsert() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(2, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Delete", agent.BucketName(), memd.CmdDelete.Name(), 1, false, "testz")
 			suite.AssertOpSpan(nilParents[1], "Add", agent.BucketName(), memd.CmdAdd.Name(), 1, false, "testz")
@@ -996,8 +1167,8 @@ func (suite *StandardTestSuite) TestBasicSetGet() {
 
 	suite.EndTest(spec)
 
-	if suite.Assert().Contains(spec.Tracer.Spans, nil) {
-		nilParents := spec.Tracer.Spans[nil]
+	nilParents := spec.Tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(2, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "test-doc")
 			suite.AssertOpSpan(nilParents[1], "Get", agent.BucketName(), memd.CmdGet.Name(), 1, false, "test-doc")
@@ -1083,8 +1254,8 @@ func (suite *StandardTestSuite) TestBasicCounters() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(4, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Delete", agent.BucketName(), memd.CmdDelete.Name(), 1, false, "testCounters")
 			suite.AssertOpSpan(nilParents[1], "Increment", agent.BucketName(), memd.CmdIncrement.Name(), 1, false, "testCounters")
@@ -1165,8 +1336,8 @@ func (suite *StandardTestSuite) TestBasicAdjoins() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(4, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testAdjoins")
 			suite.AssertOpSpan(nilParents[1], "Append", agent.BucketName(), memd.CmdAppend.Name(), 1, false, "testAdjoins")
@@ -1215,8 +1386,8 @@ func (suite *StandardTestSuite) TestExpiry() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(2, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testExpiry")
 			suite.AssertOpSpan(nilParents[1], "Get", agent.BucketName(), memd.CmdGet.Name(), 1, false, "testExpiry")
@@ -1289,8 +1460,8 @@ func (suite *StandardTestSuite) TestTouch() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(4, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testTouch")
 			suite.AssertOpSpan(nilParents[1], "Touch", agent.BucketName(), memd.CmdTouch.Name(), 1, false, "testTouch")
@@ -1366,8 +1537,8 @@ func (suite *StandardTestSuite) TestGetAndTouch() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(4, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testGetAndTouch")
 			suite.AssertOpSpan(nilParents[1], "GetAndTouch", agent.BucketName(), memd.CmdGAT.Name(), 1, false, "testGetAndTouch")
@@ -1429,8 +1600,8 @@ func (suite *StandardTestSuite) TestRetrySet() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(3, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testRetrySet")
 			suite.AssertOpSpan(nilParents[1], "GetAndLock", agent.BucketName(), memd.CmdGetLocked.Name(), 1, false, "testRetrySet")
@@ -1474,8 +1645,8 @@ func (suite *StandardTestSuite) TestObserve() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(2, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testObserve")
 			suite.AssertOpSpan(nilParents[1], "Observe", agent.BucketName(), memd.CmdObserve.Name(), 1, false, "")
@@ -1571,8 +1742,8 @@ func (suite *StandardTestSuite) TestObserveSeqNo() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(4, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "testObserve")
 			suite.AssertOpSpan(nilParents[1], "ObserveVb", agent.BucketName(), memd.CmdObserveSeqNo.Name(), 1, false, "")
@@ -1665,8 +1836,8 @@ func (suite *StandardTestSuite) TestRandomGet() {
 		}
 	}
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(len(distkeys)+attempts, len(nilParents)) {
 			for i, k := range distkeys {
 				suite.AssertOpSpan(nilParents[i], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, k)
@@ -1711,8 +1882,8 @@ func (suite *StandardTestSuite) TestStats() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(1, len(nilParents)) {
 			p := agent.kvMux.NumPipelines()
 			suite.AssertTopLevelSpan(nilParents[0], "Stats", agent.BucketName())
@@ -1786,7 +1957,7 @@ func (suite *StandardTestSuite) TestGetHttpEps() {
 }
 
 func (suite *StandardTestSuite) TestMemcachedBucket() {
-	suite.EnsureSupportsFeature(TestFeatureMemd)
+	suite.EnsureSupportsFeature(TestFeatureMemdBuckets)
 
 	spec := suite.StartTest(TestNameMemcachedBasic)
 	defer suite.EndTest(spec)
@@ -1847,8 +2018,8 @@ func (suite *StandardTestSuite) TestMemcachedBucket() {
 		suite.T().Fatalf("Expected observe error for memcached bucket!")
 	}
 
-	if suite.Assert().Contains(spec.Tracer.Spans, nil) {
-		nilParents := spec.Tracer.Spans[nil]
+	nilParents := spec.Tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(3, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "key")
 			suite.AssertOpSpan(nilParents[1], "Get", agent.BucketName(), memd.CmdGet.Name(), 1, false, "key")
@@ -1944,8 +2115,8 @@ func (suite *StandardTestSuite) TestMetaOps() {
 	}))
 	s.Wait(0)
 
-	if suite.Assert().Contains(suite.tracer.Spans, nil) {
-		nilParents := suite.tracer.Spans[nil]
+	nilParents := suite.tracer.Spans(nil)
+	if suite.Assert().NotEmpty(nilParents) {
 		if suite.Assert().Equal(2, len(nilParents)) {
 			suite.AssertOpSpan(nilParents[0], "Set", agent.BucketName(), memd.CmdSet.Name(), 1, false, "test")
 			suite.AssertOpSpan(nilParents[1], "GetMeta", agent.BucketName(), memd.CmdGetMeta.Name(), 1, false, "test")
@@ -2081,14 +2252,7 @@ func (suite *StandardTestSuite) TestAgentWaitUntilReadyGCCCP() {
 }
 
 func (suite *StandardTestSuite) VerifyConnectedToBucket(agent *Agent, s *TestSubHarness, test, collection, scope string) {
-	s.PushOp(agent.WaitUntilReady(time.Now().Add(5*time.Second), WaitUntilReadyOptions{}, func(result *WaitUntilReadyResult, err error) {
-		s.Wrap(func() {
-			if err != nil {
-				s.Fatalf("WaitUntilReady failed with error: %v", err)
-			}
-		})
-	}))
-	s.Wait(6)
+	suite.waitUntilReady(agent, s)
 
 	s.PushOp(agent.Set(SetOptions{
 		Key:            []byte(test),
@@ -2106,14 +2270,7 @@ func (suite *StandardTestSuite) VerifyConnectedToBucket(agent *Agent, s *TestSub
 }
 
 func (suite *StandardTestSuite) VerifyConnectedToBucketHTTP(agent *Agent, bucket string, s *TestSubHarness, test string) {
-	s.PushOp(agent.WaitUntilReady(time.Now().Add(5*time.Second), WaitUntilReadyOptions{}, func(result *WaitUntilReadyResult, err error) {
-		s.Wrap(func() {
-			if err != nil {
-				s.Fatalf("WaitUntilReady failed with error: %v", err)
-			}
-		})
-	}))
-	s.Wait(6)
+	suite.waitUntilReady(agent, s)
 
 	req := &HTTPRequest{
 		Service:  MgmtService,
@@ -2759,6 +2916,188 @@ func (suite *StandardTestSuite) TestOpsAfterClose() {
 		}))
 		s.Wait(0)
 	})
+}
+
+func (suite *StandardTestSuite) TestAgentVerifyPeerCertificateRejectsCertificate() {
+	suite.EnsureUsesTLS()
+
+	globalTestLogger.SuppressWarnings(true)
+	defer globalTestLogger.SuppressWarnings(false)
+
+	errCertRejected := errors.New("certificate rejected by VerifyPeerCertificateFn")
+
+	cfg := makeAgentConfig(globalTestConfig)
+	cfg.SecurityConfig.VerifyPeerCertificateFn = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		return errCertRejected
+	}
+
+	agent, err := CreateAgent(&cfg)
+	suite.Require().NoError(err)
+
+	defer agent.Close()
+
+	errCh := make(chan error)
+
+	_, err = agent.WaitUntilReady(time.Now().Add(2*time.Second), WaitUntilReadyOptions{}, func(result *WaitUntilReadyResult, err error) {
+		errCh <- err
+	})
+	suite.Require().NoError(err)
+
+	err = <-errCh
+	suite.Assert().ErrorIs(err, ErrUnambiguousTimeout)
+
+	var timeoutErr *TimeoutError
+	suite.Require().ErrorAs(err, &timeoutErr)
+	suite.Assert().Equal([]RetryReason{NotReadyRetryReason}, timeoutErr.RetryReasons)
+
+	pipelines, err := agent.kvMux.PipelineSnapshot()
+	suite.Require().NoError(err)
+	pipelines.Iterate(0, func(pipeline *memdPipeline) bool {
+		pipeline.clientsLock.Lock()
+		defer pipeline.clientsLock.Unlock()
+
+		for _, cli := range pipeline.clients {
+			suite.Assert().ErrorIs(cli.Error(), errCertRejected)
+		}
+
+		return false
+	})
+}
+
+func (suite *StandardTestSuite) TestReconfigureSecurityKeepsVerifyPeerCertificate() {
+	suite.EnsureUsesTLS()
+
+	globalTestLogger.SuppressWarnings(true)
+	defer globalTestLogger.SuppressWarnings(false)
+
+	errCertRejected := errors.New("certificate rejected by VerifyPeerCertificateFn")
+
+	cfg := makeAgentConfig(globalTestConfig)
+	cfg.SecurityConfig.VerifyPeerCertificateFn = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		return errCertRejected
+	}
+
+	agent, err := CreateAgent(&cfg)
+	suite.Require().NoError(err)
+
+	defer agent.Close()
+
+	rootCAProvider := cfg.SecurityConfig.TLSRootCAProvider
+	if rootCAProvider == nil {
+		rootCAProvider = func() *x509.CertPool {
+			return nil
+		}
+	}
+
+	// Reconfigure without providing a VerifyPeerCertificateFn. The existing one, set at
+	// agent creation time, must be kept.
+	err = agent.ReconfigureSecurity(ReconfigureSecurityOptions{
+		UseTLS:            true,
+		TLSRootCAProvider: rootCAProvider,
+	})
+	suite.Require().NoError(err)
+
+	agent.connectionSettingsLock.Lock()
+	verifyPeerCertificate := agent.tlsConfig.BaseConfig.VerifyPeerCertificate
+	agent.connectionSettingsLock.Unlock()
+
+	suite.Require().NotNil(verifyPeerCertificate, "VerifyPeerCertificate should have been preserved")
+	suite.Assert().ErrorIs(verifyPeerCertificate(nil, nil), errCertRejected)
+}
+
+func (suite *StandardTestSuite) TestReconfigureSecurityKeepsVerifyPeerCertificateAcrossTLSToggle() {
+	suite.EnsureUsesTLS()
+
+	globalTestLogger.SuppressWarnings(true)
+	defer globalTestLogger.SuppressWarnings(false)
+
+	errCertRejected := errors.New("certificate rejected by VerifyPeerCertificateFn")
+
+	cfg := makeAgentConfig(globalTestConfig)
+	cfg.SecurityConfig.VerifyPeerCertificateFn = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+		return errCertRejected
+	}
+
+	agent, err := CreateAgent(&cfg)
+	suite.Require().NoError(err)
+
+	defer agent.Close()
+
+	rootCAProvider := cfg.SecurityConfig.TLSRootCAProvider
+	if rootCAProvider == nil {
+		rootCAProvider = func() *x509.CertPool {
+			return nil
+		}
+	}
+
+	// Disable TLS. The VerifyPeerCertificateFn set at creation time must be retained internally
+	// even though there is no active tlsConfig to hold it.
+	err = agent.ReconfigureSecurity(ReconfigureSecurityOptions{
+		UseTLS: false,
+	})
+	suite.Require().NoError(err)
+
+	// Re-enable TLS without providing a VerifyPeerCertificateFn. The one from creation
+	// time must be restored.
+	err = agent.ReconfigureSecurity(ReconfigureSecurityOptions{
+		UseTLS:            true,
+		TLSRootCAProvider: rootCAProvider,
+	})
+	suite.Require().NoError(err)
+
+	agent.connectionSettingsLock.Lock()
+	verifyPeerCertificate := agent.tlsConfig.BaseConfig.VerifyPeerCertificate
+	agent.connectionSettingsLock.Unlock()
+
+	suite.Require().NotNil(verifyPeerCertificate, "VerifyPeerCertificate should have survived the TLS disable/enable cycle")
+	suite.Assert().ErrorIs(verifyPeerCertificate(nil, nil), errCertRejected)
+}
+
+func (suite *UnitTestSuite) TestSetupTLSConfigPassesThroughVerifyPeerCertificateFn() {
+	errCertRejected := errors.New("certificate rejected by VerifyPeerCertificateFn")
+
+	rootCAProvider := func() *x509.CertPool {
+		return nil
+	}
+
+	secConfig := SecurityConfig{
+		UseTLS:            true,
+		TLSRootCAProvider: rootCAProvider,
+		Auth: &PasswordAuthProvider{
+			Username: "user",
+			Password: "pass",
+		},
+		VerifyPeerCertificateFn: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			return errCertRejected
+		},
+	}
+
+	tlsConfig, err := setupTLSConfig([]string{"localhost:11210"}, secConfig)
+	suite.Require().NoError(err)
+	suite.Require().NotNil(tlsConfig)
+
+	verifyPeerCertificate := tlsConfig.BaseConfig.VerifyPeerCertificate
+	suite.Require().NotNil(verifyPeerCertificate, "VerifyPeerCertificate should have been set from the SecurityConfig")
+	suite.Assert().ErrorIs(verifyPeerCertificate(nil, nil), errCertRejected)
+}
+
+func (suite *UnitTestSuite) TestSetupTLSConfigNilVerifyPeerCertificateFn() {
+	secConfig := SecurityConfig{
+		UseTLS: true,
+		TLSRootCAProvider: func() *x509.CertPool {
+			return nil
+		},
+		Auth: &PasswordAuthProvider{
+			Username: "user",
+			Password: "pass",
+		},
+	}
+
+	tlsConfig, err := setupTLSConfig([]string{"localhost:11210"}, secConfig)
+	suite.Require().NoError(err)
+	suite.Require().NotNil(tlsConfig)
+
+	suite.Assert().Nil(tlsConfig.BaseConfig.VerifyPeerCertificate)
 }
 
 // These functions are likely temporary.

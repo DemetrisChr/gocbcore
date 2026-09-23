@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/couchbase/gocbcore/v10/connstr"
 	"github.com/couchbase/gocbcore/v10/memd"
+
 	cavescli "github.com/couchbaselabs/gocaves/client"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
@@ -122,7 +124,7 @@ func (suite *StandardTestSuite) SupportsFeature(feature TestFeatureCode) bool {
 		return true
 	case TestFeatureReplicas:
 		return true
-	case TestFeatureMemd:
+	case TestFeatureMemdBuckets:
 		return suite.IsMockServer() || suite.ClusterVersion.Lower(srvVer800)
 	case TestFeatureN1ql:
 		return !suite.IsMockServer() && !suite.ClusterVersion.Equal(srvVer650DP)
@@ -204,6 +206,18 @@ func (suite *StandardTestSuite) EnsureSupportsFeature(feature TestFeatureCode) {
 	}
 }
 
+func (suite *StandardTestSuite) EnsureUsesTLS() {
+	spec, err := connstr.Parse(globalTestConfig.ConnStr)
+	suite.Require().NoError(err)
+
+	resolvedSpec, err := connstr.Resolve(spec)
+	suite.Require().NoError(err)
+
+	if !resolvedSpec.UseSsl {
+		suite.T().Skip("Skipping test due to TLS not being enabled")
+	}
+}
+
 type TestSpec struct {
 	Agent      *Agent
 	Collection string
@@ -266,36 +280,7 @@ func (suite *StandardTestSuite) StartTest(name TestName) TestSpec {
 
 	// Prime the agent to ensure that operations are clear to send without messing with tracing spans.
 	s := suite.GetHarness()
-	if suite.SupportsFeature(TestFeatureCavesUnreliable) {
-		s.PushOp(agent.WaitUntilReady(time.Now().Add(5*time.Second), WaitUntilReadyOptions{}, func(result *WaitUntilReadyResult, err error) {
-			s.Wrap(func() {
-				if err != nil {
-					s.Fatalf("WaitUntilReady failed with error: %v", err)
-				}
-			})
-		}))
-		s.Wait(6)
-	} else {
-		// Caves has a bug where waituntilready doesn't always succeed so just retry.
-		success := suite.tryUntil(time.Now().Add(60*time.Second), 1*time.Second, func() bool {
-			wait := make(chan error, 1)
-			s.PushOp(agent.WaitUntilReady(time.Now().Add(5*time.Second), WaitUntilReadyOptions{}, func(result *WaitUntilReadyResult, err error) {
-				s.Wrap(func() {
-					wait <- err
-				})
-			}))
-			s.Wait(6)
-
-			err := <-wait
-			if err != nil {
-				suite.T().Logf("WaitUntilReady failed: %v", err)
-				return false
-			}
-
-			return true
-		})
-		suite.Require().True(success, "WaitUntilReady did not succeed in time")
-	}
+	suite.waitUntilReady(agent, s)
 
 	return TestSpec{
 		Agent:      agent,
@@ -402,6 +387,42 @@ func (suite *StandardTestSuite) tryAtMost(times int, interval time.Duration, fn 
 		}
 		time.Sleep(interval)
 	}
+}
+
+// waitUntilReady waits for the agent to be ready, retrying against Caves which has a bug where
+// WaitUntilReady doesn't always succeed.
+func (suite *StandardTestSuite) waitUntilReady(agent *Agent, s *TestSubHarness) {
+	if suite.SupportsFeature(TestFeatureCavesUnreliable) {
+		s.PushOp(agent.WaitUntilReady(time.Now().Add(5*time.Second), WaitUntilReadyOptions{}, func(result *WaitUntilReadyResult, err error) {
+			s.Wrap(func() {
+				if err != nil {
+					s.Fatalf("WaitUntilReady failed with error: %v", err)
+				}
+			})
+		}))
+		s.Wait(6)
+
+		return
+	}
+
+	success := suite.tryUntil(time.Now().Add(60*time.Second), 1*time.Second, func() bool {
+		wait := make(chan error, 1)
+		s.PushOp(agent.WaitUntilReady(time.Now().Add(5*time.Second), WaitUntilReadyOptions{}, func(result *WaitUntilReadyResult, err error) {
+			s.Wrap(func() {
+				wait <- err
+			})
+		}))
+		s.Wait(6)
+
+		err := <-wait
+		if err != nil {
+			suite.T().Logf("WaitUntilReady failed: %v", err)
+			return false
+		}
+
+		return true
+	})
+	suite.Require().True(success, "WaitUntilReady did not succeed in time")
 }
 
 func (suite *StandardTestSuite) tryUntil(deadline time.Time, interval time.Duration, fn func() bool) bool {
